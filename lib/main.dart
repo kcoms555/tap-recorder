@@ -1,8 +1,13 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:permission_handler/permission_handler.dart';
+import 'dart:html';
 
 
 void main() {
@@ -32,12 +37,13 @@ class RecorderHome extends StatefulWidget {
 class _RecorderHomeState extends State<RecorderHome> {
   FlutterSoundPlayer _player = FlutterSoundPlayer();
   FlutterSoundRecorder _recorder = FlutterSoundRecorder();
+  bool _recorderWillRunning = false;
   bool _playerIsInited = false;
   bool _recorderIsInited = false;
-  bool _playbackReady = false;
-  int i = 0;
-  String status = 'ready';
+  String status = 'unaccepted';
   final String _path = 'sound';
+  DateTime startTimestamp;
+  DateTime endTimestamp;
 
   @override
   void initState() {
@@ -47,13 +53,19 @@ class _RecorderHomeState extends State<RecorderHome> {
         _playerIsInited = true;
       });
     });
+    initMic();
+  }
+
+  void initMic() {
     openTheRecorder().then((value) {
       setState(() {
         _recorderIsInited = true;
+        status = 'ready';
       });
     }, onError: (e) {
       if (e is RecordingPermissionException) {
         _recorderIsInited = false;
+        status = 'unaccepted';
         return;
       }
       throw e;
@@ -70,19 +82,39 @@ class _RecorderHomeState extends State<RecorderHome> {
   }
 
   Future<void> openTheRecorder() async {
-    if (!kIsWeb) {
+    if (kIsWeb) {
+      try {
+        await window.navigator.getUserMedia(audio: true);
+      } catch (e){
+        print(e);
+        throw RecordingPermissionException('Microphone permission not granted');
+      }
+    } else{
       var status = await Permission.microphone.request();
       if (status != PermissionStatus.granted) {
         throw RecordingPermissionException('Microphone permission not granted');
       }
-    }
+   }
     await _recorder.openAudioSession();
     _recorderIsInited = true;
   }
 
-  Future<void> record() async {
+  Future<void> stopRecord() async {
+    if(!_recorder.isStopped) {
+      _recorderWillRunning = false;
+      endTimestamp = DateTime.now();
+      await _recorder.stopRecorder();
+      setState(() {
+        status = 'ready';
+      });
+    }
+  }
+
+  Future<void> startRecord() async {
+    _recorderWillRunning = true;
     await stopPlayer();
-    print("kIsWeb : $kIsWeb");
+    await Future.delayed(Duration(milliseconds: 200));
+    startTimestamp = DateTime.now();
     _recorder.startRecorder(
       toFile: _path,
       sampleRate: 48000,
@@ -90,19 +122,8 @@ class _RecorderHomeState extends State<RecorderHome> {
       codec: kIsWeb ? Codec.opusWebM : Codec.aacADTS,
     );
     setState(() {
-      _playbackReady = false;
       status = 'recording';
     });
-  }
-
-  Future<void> stopRecorder() async {
-    if(!_recorder.isStopped) {
-      _recorder.stopRecorder().then((value) {
-        setState(() {
-          _playbackReady = true;
-        });
-      });
-    }
   }
 
   Future<void> stopPlayer() async {
@@ -112,7 +133,12 @@ class _RecorderHomeState extends State<RecorderHome> {
   }
 
   Future<void> playPlayer() async {
-    await stopRecorder();
+    if(!_recorder.isStopped || _recorderWillRunning){
+      return;
+    }
+    setState(() {
+      status = 'playing';
+    });
     await _player.startPlayer(
         fromURI: _path,
         codec: kIsWeb ? Codec.opusWebM : Codec.aacADTS,
@@ -120,13 +146,19 @@ class _RecorderHomeState extends State<RecorderHome> {
           playPlayer();
         }
     );
-    setState(() {
-      status = 'playing';
-    });
   }
 
   Future<void> cancelAndPlay() async {
-    await stopRecorder();
+    await Future.delayed(Duration(milliseconds: 400));
+    await stopRecord();
+    int lenInMilliseconds = endTimestamp.millisecondsSinceEpoch - startTimestamp.millisecondsSinceEpoch;
+    print('len : $lenInMilliseconds');
+    if(lenInMilliseconds <= 800){
+      setState(() {
+        status = 'ready';
+      });
+      return;
+    }
     await playPlayer();
   }
 
@@ -152,8 +184,8 @@ class _RecorderHomeState extends State<RecorderHome> {
           child: Center(
               child: _getStatusIcon(),
             ),
-          onTap: _recorderIsInited ? (){cancelAndPlay();} : null,
-          onTapDown: _recorderIsInited ? (detail){record();} : null,
+          onTap: _recorderIsInited ? (){cancelAndPlay();} : initMic,
+          onTapDown: _recorderIsInited ? (detail){startRecord();} : null,
           onTapCancel: _recorderIsInited ? (){cancelAndPlay();} : null
         )
       )
@@ -174,6 +206,10 @@ class _RecorderHomeState extends State<RecorderHome> {
         break;
       case 'playing':
         iconData = Icons.replay_outlined;
+        color = Colors.white;
+        break;
+      case 'unaccepted':
+        iconData = Icons.not_interested;
         color = Colors.white;
         break;
       default:
