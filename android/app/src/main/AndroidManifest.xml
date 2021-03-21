@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.kcoms.tap_recorder">
    <application
-        android:label="tap_recorder"
+        android:label="Tap Recorder"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"
